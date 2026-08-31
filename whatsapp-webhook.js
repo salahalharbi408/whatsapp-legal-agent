@@ -1,8 +1,5 @@
 const express = require('express');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const { Document, Packer, Paragraph, HeadingLevel } = require('docx');
 require('dotenv').config();
 
 const app = express();
@@ -17,7 +14,8 @@ const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const CLAUDE_MODEL = 'claude-opus-4-8';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
-async function sendWhatsAppMessage(to, message, mediaUrl = null) {
+// Send WhatsApp message
+async function sendWhatsAppMessage(to, message) {
   try {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.create`;
     
@@ -25,27 +23,20 @@ async function sendWhatsAppMessage(to, message, mediaUrl = null) {
     data.append('From', `whatsapp:${TWILIO_PHONE_NUMBER}`);
     data.append('To', to);
     data.append('Body', message);
-    
-    if (mediaUrl) {
-      data.append('MediaUrl', mediaUrl);
-    }
 
-    const response = await axios.post(url, data, {
-      auth: {
-        username: TWILIO_ACCOUNT_SID,
-        password: TWILIO_AUTH_TOKEN
-      },
+    await axios.post(url, data, {
+      auth: { username: TWILIO_ACCOUNT_SID, password: TWILIO_AUTH_TOKEN },
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
     console.log('✅ Sent to', to);
-    return response.data.sid;
   } catch (error) {
-    console.error('❌ Send failed:', error.response?.status, error.response?.data || error.message);
+    console.error('❌ Send failed:', error.message);
     throw error;
   }
 }
 
+// Call Claude
 async function callClaudeAPI(userMessage) {
   try {
     console.log('🤖 Calling Claude...');
@@ -53,13 +44,12 @@ async function callClaudeAPI(userMessage) {
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
       max_tokens: 4096,
-      system: 'You are a helpful legal assistant for Saudi law and business agreements. Generate professional, detailed legal documents when requested. Keep responses concise and friendly.',
+      system: 'You are a professional legal assistant for Saudi Arabia. Provide detailed, accurate legal documents and advice. Be concise and professional.',
       messages: [{ role: 'user', content: userMessage }]
     }, {
       headers: {
         'x-api-key': CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
+        'anthropic-version': '2023-06-01'
       }
     });
 
@@ -67,54 +57,17 @@ async function callClaudeAPI(userMessage) {
     console.log('✅ Claude responded');
     return textContent.text;
   } catch (error) {
-    console.error('❌ Claude failed:', error.response?.status, error.response?.data || error.message);
-    throw new Error('Claude API error: ' + (error.response?.data?.error?.message || error.message));
-  }
-}
-
-async function generateWordDocument(title, content) {
-  try {
-    console.log('📝 Generating Word document...');
-    
-    // Split content into paragraphs
-    const paragraphs = content.split('\n').filter(p => p.trim()).map(text => 
-      new Paragraph({
-        text: text,
-        spacing: { line: 360, after: 200 }
-      })
-    );
-
-    const doc = new Document({
-      sections: [{
-        children: [
-          new Paragraph({
-            text: title,
-            heading: HeadingLevel.HEADING_1,
-            spacing: { after: 400 }
-          }),
-          ...paragraphs
-        ]
-      }]
-    });
-
-    const fileName = `document_${Date.now()}.docx`;
-    const filePath = path.join('/tmp', fileName);
-
-    const buffer = await Packer.toBuffer(doc);
-    fs.writeFileSync(filePath, buffer);
-    
-    console.log('✅ Word document generated:', filePath);
-    return filePath;
-  } catch (error) {
-    console.error('❌ Document generation failed:', error.message);
+    console.error('❌ Claude error:', error.message);
     throw error;
   }
 }
 
+// Health check
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK' });
 });
 
+// Main webhook
 app.post('/webhook/whatsapp', async (req, res) => {
   try {
     // Acknowledge immediately
@@ -123,81 +76,88 @@ app.post('/webhook/whatsapp', async (req, res) => {
     let from = req.body.From;
     const body = req.body.Body;
 
-    console.log('\n📨 Received:', { from, body });
-
-    if (!from || !body) {
-      console.log('⚠️  Missing data');
-      return;
-    }
+    if (!from || !body) return;
 
     if (from.includes('whatsapp:')) {
       from = from.replace('whatsapp:', '');
     }
 
-    console.log(`📱 From: ${from}, Message: "${body.substring(0, 50)}..."`);
+    console.log(`\n📱 Message from ${from}:`);
+    console.log(`   "${body.substring(0, 80)}..."`);
 
     // Send thinking message
-    await sendWhatsAppMessage(`whatsapp:${from}`, '⏳ Processing your request...');
+    await sendWhatsAppMessage(`whatsapp:${from}`, '⏳ Processing...');
 
     // Call Claude
-    const claudeResponse = await callClaudeAPI(body);
+    let claudeResponse = await callClaudeAPI(body);
 
-    // Check if user asked for Word document
-    const wantDocument = body.toLowerCase().includes('word') || 
-                         body.toLowerCase().includes('docx') || 
-                         body.toLowerCase().includes('document');
+    // Check if document was requested
+    const documentRequested = body.toLowerCase().includes('word') || 
+                              body.toLowerCase().includes('docx') || 
+                              body.toLowerCase().includes('document');
 
-    if (wantDocument) {
-      console.log('📄 User requested Word document');
+    if (documentRequested) {
+      console.log('📄 Document requested');
       
-      try {
-        // Extract title from message
-        const titleMatch = body.match(/^(.{1,100}?)[\.\,\n]/);
-        const docTitle = titleMatch ? titleMatch[1] : 'Legal Document';
+      // Split response into chunks if too long (WhatsApp has message limits)
+      const maxLength = 4090;
+      if (claudeResponse.length > maxLength) {
+        // Send first part
+        await sendWhatsAppMessage(`whatsapp:${from}`, claudeResponse.substring(0, maxLength));
         
-        // Generate Word document
-        const docPath = await generateWordDocument(docTitle, claudeResponse);
-        const fileSize = fs.statSync(docPath).size;
-        
-        console.log(`📦 Document size: ${fileSize} bytes`);
+        // Send remaining parts
+        let remaining = claudeResponse.substring(maxLength);
+        while (remaining.length > 0) {
+          await sendWhatsAppMessage(`whatsapp:${from}`, remaining.substring(0, maxLength));
+          remaining = remaining.substring(maxLength);
+        }
 
-        // For now, send a message with instructions since we can't directly upload to WhatsApp
-        // In production, you'd upload to Google Drive and send a link
+        // Send final note
         await sendWhatsAppMessage(
           `whatsapp:${from}`, 
-          `✅ Document generated!\n\nYour Word document is ready (${Math.round(fileSize/1024)}KB).\n\nFor Step 3, we'll connect Google Drive to auto-upload documents. Reply with "next" to continue setup.`
+          `✅ Document complete!\n\n(In Step 3, documents will auto-save to Google Drive with shareable links)`
         );
-
-        // Store file path for potential later upload
-        console.log('📄 Document ready:', docPath);
-      } catch (docError) {
-        console.error('❌ Document generation failed:', docError.message);
+      } else {
+        // Send complete document
+        await sendWhatsAppMessage(`whatsapp:${from}`, claudeResponse);
         await sendWhatsAppMessage(
           `whatsapp:${from}`, 
-          `Document generation in progress. Please try again in a moment.`
+          `✅ Document generated!\n\n(In Step 3, this will auto-save to Google Drive)`
         );
       }
     } else {
-      // Send text response
-      await sendWhatsAppMessage(`whatsapp:${from}`, claudeResponse);
+      // Regular text response
+      // Split if too long
+      const maxLength = 4090;
+      if (claudeResponse.length > maxLength) {
+        await sendWhatsAppMessage(`whatsapp:${from}`, claudeResponse.substring(0, maxLength));
+        let remaining = claudeResponse.substring(maxLength);
+        while (remaining.length > 0) {
+          await sendWhatsAppMessage(`whatsapp:${from}`, remaining.substring(0, maxLength));
+          remaining = remaining.substring(maxLength);
+        }
+      } else {
+        await sendWhatsAppMessage(`whatsapp:${from}`, claudeResponse);
+      }
     }
 
-    console.log('✅ Response processed\n');
+    console.log('✅ Response sent\n');
 
   } catch (error) {
-    console.error('❌ Webhook error:', error.message);
+    console.error('❌ Error:', error.message);
     try {
       const from = req.body.From?.replace('whatsapp:', '');
       if (from) {
-        await sendWhatsAppMessage(`whatsapp:${from}`, 'Sorry, I encountered an error. Please try again.');
+        await sendWhatsAppMessage(`whatsapp:${from}`, '❌ Error processing request. Please try again.');
       }
-    } catch (innerError) {
-      console.error('❌ Error sending fallback message:', innerError.message);
+    } catch (e) {
+      console.error('Could not send error message');
     }
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`✅ WhatsApp Agent running on port ${PORT}\n`);
+  console.log(`\n✅ WhatsApp Legal Agent running on port ${PORT}`);
+  console.log(`📱 Ready to receive messages\n`);
 });
