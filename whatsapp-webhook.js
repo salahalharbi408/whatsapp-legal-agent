@@ -1,7 +1,5 @@
 const express = require('express');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -20,13 +18,10 @@ const CLAUDE_MODEL = 'claude-opus-4-8';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
 console.log('✅ Server starting...');
-console.log('TWILIO_ACCOUNT_SID:', TWILIO_ACCOUNT_SID ? 'SET' : 'MISSING');
-console.log('TWILIO_AUTH_TOKEN:', TWILIO_AUTH_TOKEN ? 'SET' : 'MISSING');
 console.log('TWILIO_PHONE_NUMBER:', TWILIO_PHONE_NUMBER);
-console.log('CLAUDE_API_KEY:', CLAUDE_API_KEY ? 'SET' : 'MISSING');
 
 // ============================================
-// HELPER: Send WhatsApp message back to user
+// HELPER: Send WhatsApp message
 // ============================================
 async function sendWhatsAppMessage(to, message) {
   try {
@@ -34,7 +29,7 @@ async function sendWhatsAppMessage(to, message) {
     
     const data = new URLSearchParams();
     data.append('From', `whatsapp:${TWILIO_PHONE_NUMBER}`);
-    data.append('To', `whatsapp:${to}`);
+    data.append('To', to);
     data.append('Body', message);
 
     const response = await axios.post(url, data, {
@@ -45,11 +40,10 @@ async function sendWhatsAppMessage(to, message) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
-    console.log('✅ WhatsApp message sent:', response.data.sid);
+    console.log('✅ Message sent:', response.data.sid);
     return response.data.sid;
   } catch (error) {
-    console.error('❌ Error sending WhatsApp message:', error.response?.data || error.message);
-    throw error;
+    console.error('❌ Send error:', error.response?.data || error.message);
   }
 }
 
@@ -58,18 +52,11 @@ async function sendWhatsAppMessage(to, message) {
 // ============================================
 async function callClaudeAPI(userMessage) {
   try {
-    console.log('📞 Calling Claude API with message:', userMessage.substring(0, 50) + '...');
-
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
       max_tokens: 1024,
-      system: 'You are a helpful legal assistant. Keep responses concise and friendly.',
-      messages: [
-        {
-          role: 'user',
-          content: userMessage
-        }
-      ]
+      system: 'You are a helpful legal assistant. Keep responses concise and friendly. Respond in plain text.',
+      messages: [{ role: 'user', content: userMessage }]
     }, {
       headers: {
         'x-api-key': CLAUDE_API_KEY,
@@ -81,78 +68,68 @@ async function callClaudeAPI(userMessage) {
     console.log('✅ Claude responded');
     return textContent.text;
   } catch (error) {
-    console.error('❌ Claude API error:', error.response?.data || error.message);
-    throw error;
+    console.error('❌ Claude error:', error.response?.data || error.message);
+    return 'Sorry, I had an error processing your message.';
   }
 }
 
 // ============================================
-// HEALTH CHECK ENDPOINT
+// HEALTH CHECK
 // ============================================
 app.get('/health', (req, res) => {
-  console.log('💚 Health check ping');
-  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+  res.status(200).json({ status: 'OK' });
 });
 
 // ============================================
-// MAIN WEBHOOK ENDPOINT
+// WEBHOOK ENDPOINT
 // ============================================
 app.post('/webhook/whatsapp', async (req, res) => {
   try {
+    // Log raw body for debugging
     console.log('\n📨 Webhook received!');
-    console.log('Body:', JSON.stringify(req.body, null, 2));
+    console.log('Raw body:', req.body);
 
-    // Acknowledge immediately so Twilio knows we got it
+    // Acknowledge immediately
     res.status(200).send('OK');
 
-    // Extract message data - Twilio sends form data
-    const from = req.body.From?.replace('whatsapp:', '') || req.body.from;
-    const messageBody = req.body.Body || req.body.body || '';
+    // Extract fields - Twilio sends as form data
+    let from = req.body.From;
+    const body = req.body.Body;
 
-    console.log(`📱 Message from ${from}: ${messageBody}`);
+    console.log('Extracted - From:', from, 'Body:', body);
 
-    if (!from || !messageBody) {
-      console.log('⚠️  Missing from or body:', { from, messageBody });
+    if (!from || !body) {
+      console.log('❌ Missing fields - From:', from, 'Body:', body);
       return;
     }
 
+    // Remove whatsapp: prefix if present
+    if (from.includes('whatsapp:')) {
+      from = from.replace('whatsapp:', '');
+    }
+
+    console.log(`📱 Message from ${from}: "${body}"`);
+
     // Send thinking message
-    await sendWhatsAppMessage(from, '⏳ Processing your message...');
+    await sendWhatsAppMessage(`whatsapp:${from}`, '⏳ Thinking...');
 
-    // Call Claude
-    const claudeResponse = await callClaudeAPI(messageBody);
+    // Get Claude response
+    const claudeResponse = await callClaudeAPI(body);
 
-    // Send response
-    await sendWhatsAppMessage(from, claudeResponse);
-    console.log('✅ Response sent successfully\n');
+    // Send response back
+    await sendWhatsAppMessage(`whatsapp:${from}`, claudeResponse);
+    console.log('✅ Response sent\n');
 
   } catch (error) {
-    console.error('❌ Webhook error:', error.message);
-    try {
-      const from = req.body.From?.replace('whatsapp:', '') || req.body.from;
-      if (from) {
-        await sendWhatsAppMessage(from, '❌ Error processing your message. Please try again.');
-      }
-    } catch (innerError) {
-      console.error('❌ Could not send error message:', innerError.message);
-    }
+    console.error('❌ Error:', error.message);
   }
 });
 
 // ============================================
-// CATCH-ALL LOGGING
-// ============================================
-app.use((req, res) => {
-  console.log(`⚠️  Unknown route: ${req.method} ${req.path}`);
-  res.status(404).json({ error: 'Not found' });
-});
-
-// ============================================
-// START SERVER
+// START
 // ============================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\n✅ WhatsApp Agent webhook running on port ${PORT}`);
-  console.log(`📱 Webhook URL: https://whatsapp-legal-agent-tyc6.onrender.com/webhook/whatsapp`);
-  console.log(`❤️  Health check: https://whatsapp-legal-agent-tyc6.onrender.com/health\n`);
+  console.log(`\n✅ WhatsApp Agent running on port ${PORT}`);
+  console.log(`📱 Webhook: https://whatsapp-legal-agent-tyc6.onrender.com/webhook/whatsapp\n`);
 });
