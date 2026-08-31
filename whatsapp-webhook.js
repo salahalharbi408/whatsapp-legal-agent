@@ -11,11 +11,11 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
-// Try with full date-based model name
-const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022';
+// Simple, proven model
+const CLAUDE_MODEL = 'claude-haiku-4-5-20241226';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
-console.log('🚀 Starting with model:', CLAUDE_MODEL);
+console.log('🚀 Model:', CLAUDE_MODEL);
 
 async function sendWhatsAppMessage(to, message) {
   try {
@@ -40,8 +40,6 @@ async function sendWhatsAppMessage(to, message) {
 
 async function callClaudeAPI(message) {
   try {
-    console.log('📞 Claude API...');
-    
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
       max_tokens: 2048,
@@ -56,7 +54,7 @@ async function callClaudeAPI(message) {
       }
     });
 
-    console.log('✅ Response OK');
+    console.log('✅ Claude OK');
     return response.data.content[0].text;
   } catch (error) {
     console.error('❌ Error:', error.response?.status, error.response?.data?.error?.message);
@@ -76,9 +74,9 @@ app.post('/webhook/whatsapp', async (req, res) => {
     if (!from || !body) return;
 
     const to = `whatsapp:${from}`;
-    console.log(`\n📱 ${from}: ${body}`);
+    console.log(`📱 ${from}: ${body}`);
 
-    await sendWhatsAppMessage(to, '⏳ Processing...');
+    await sendWhatsAppMessage(to, '⏳ One moment...');
     const response = await callClaudeAPI(body);
 
     if (response.length > 4090) {
