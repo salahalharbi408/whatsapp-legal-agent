@@ -11,11 +11,11 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
-// Simple, proven model
-const CLAUDE_MODEL = 'claude-haiku-4-5-20241226';
+// FREE TIER MODEL - Original Claude 3 Haiku
+const CLAUDE_MODEL = 'claude-3-haiku-20240307';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
-console.log('🚀 Model:', CLAUDE_MODEL);
+console.log('🚀 Model (Free Tier):', CLAUDE_MODEL);
 
 async function sendWhatsAppMessage(to, message) {
   try {
@@ -42,7 +42,7 @@ async function callClaudeAPI(message) {
   try {
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
-      max_tokens: 2048,
+      max_tokens: 1024,
       messages: [{
         role: 'user',
         content: message
@@ -76,7 +76,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
     const to = `whatsapp:${from}`;
     console.log(`📱 ${from}: ${body}`);
 
-    await sendWhatsAppMessage(to, '⏳ One moment...');
+    await sendWhatsAppMessage(to, '⏳ Processing...');
     const response = await callClaudeAPI(body);
 
     if (response.length > 4090) {
