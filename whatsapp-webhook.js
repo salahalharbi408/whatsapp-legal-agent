@@ -11,11 +11,11 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
-// Current valid Claude model
-const CLAUDE_MODEL = 'claude-sonnet-5';
+// Try with full date-based model name
+const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
-console.log('🚀 Starting - Model:', CLAUDE_MODEL);
+console.log('🚀 Starting with model:', CLAUDE_MODEL);
 
 async function sendWhatsAppMessage(to, message) {
   try {
@@ -31,16 +31,16 @@ async function sendWhatsAppMessage(to, message) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
-    console.log('✅ WhatsApp sent');
+    console.log('✅ Sent');
   } catch (error) {
-    console.error('❌ WhatsApp error:', error.message);
+    console.error('❌ Error:', error.message);
     throw error;
   }
 }
 
 async function callClaudeAPI(message) {
   try {
-    console.log('📞 Calling Claude...');
+    console.log('📞 Claude API...');
     
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
@@ -56,10 +56,10 @@ async function callClaudeAPI(message) {
       }
     });
 
-    console.log('✅ Claude OK');
+    console.log('✅ Response OK');
     return response.data.content[0].text;
   } catch (error) {
-    console.error('❌ Claude failed:', error.response?.status, error.response?.data?.error?.message);
+    console.error('❌ Error:', error.response?.status, error.response?.data?.error?.message);
     throw error;
   }
 }
@@ -76,7 +76,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
     if (!from || !body) return;
 
     const to = `whatsapp:${from}`;
-    console.log(`\n📱 ${from}: ${body.substring(0, 50)}`);
+    console.log(`\n📱 ${from}: ${body}`);
 
     await sendWhatsAppMessage(to, '⏳ Processing...');
     const response = await callClaudeAPI(body);
@@ -91,7 +91,7 @@ app.post('/webhook/whatsapp', async (req, res) => {
       await sendWhatsAppMessage(to, response);
     }
 
-    console.log('✅ Complete\n');
+    console.log('✅ Done\n');
   } catch (error) {
     console.error('Error:', error.message);
     try {
