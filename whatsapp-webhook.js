@@ -5,25 +5,30 @@ const path = require('path');
 require('dotenv').config();
 
 const app = express();
+app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 // ============================================
-// CONFIGURATION - You'll set these as env vars
+// CONFIGURATION
 // ============================================
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
-const GOOGLE_DRIVE_API_KEY = process.env.GOOGLE_DRIVE_API_KEY; // For later
-const FIRM_DB_URL = process.env.FIRM_DB_URL; // Your firm database endpoint
 
 const CLAUDE_MODEL = 'claude-opus-4-8';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
+console.log('✅ Server starting...');
+console.log('TWILIO_ACCOUNT_SID:', TWILIO_ACCOUNT_SID ? 'SET' : 'MISSING');
+console.log('TWILIO_AUTH_TOKEN:', TWILIO_AUTH_TOKEN ? 'SET' : 'MISSING');
+console.log('TWILIO_PHONE_NUMBER:', TWILIO_PHONE_NUMBER);
+console.log('CLAUDE_API_KEY:', CLAUDE_API_KEY ? 'SET' : 'MISSING');
+
 // ============================================
 // HELPER: Send WhatsApp message back to user
 // ============================================
-async function sendWhatsAppMessage(to, message, mediaUrl = null) {
+async function sendWhatsAppMessage(to, message) {
   try {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.create`;
     
@@ -31,10 +36,6 @@ async function sendWhatsAppMessage(to, message, mediaUrl = null) {
     data.append('From', `whatsapp:${TWILIO_PHONE_NUMBER}`);
     data.append('To', `whatsapp:${to}`);
     data.append('Body', message);
-    
-    if (mediaUrl) {
-      data.append('MediaUrl', mediaUrl);
-    }
 
     const response = await axios.post(url, data, {
       auth: {
@@ -44,35 +45,10 @@ async function sendWhatsAppMessage(to, message, mediaUrl = null) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
-    console.log('WhatsApp message sent:', response.data.sid);
+    console.log('✅ WhatsApp message sent:', response.data.sid);
     return response.data.sid;
   } catch (error) {
-    console.error('Error sending WhatsApp message:', error.response?.data || error.message);
-    throw error;
-  }
-}
-
-// ============================================
-// HELPER: Download file from Twilio
-// ============================================
-async function downloadMediaFromTwilio(mediaUrl) {
-  try {
-    const response = await axios.get(mediaUrl, {
-      auth: {
-        username: TWILIO_ACCOUNT_SID,
-        password: TWILIO_AUTH_TOKEN
-      },
-      responseType: 'arraybuffer'
-    });
-
-    const fileName = `attachment_${Date.now()}`;
-    const filePath = path.join('/tmp', fileName);
-    fs.writeFileSync(filePath, response.data);
-    
-    console.log('File downloaded:', filePath);
-    return { filePath, fileData: response.data };
-  } catch (error) {
-    console.error('Error downloading media:', error.message);
+    console.error('❌ Error sending WhatsApp message:', error.response?.data || error.message);
     throw error;
   }
 }
@@ -80,48 +56,20 @@ async function downloadMediaFromTwilio(mediaUrl) {
 // ============================================
 // HELPER: Call Claude API
 // ============================================
-async function callClaudeAPI(userMessage, attachmentData = null, userInstruction = null) {
+async function callClaudeAPI(userMessage) {
   try {
-    const messages = [
-      {
-        role: 'user',
-        content: userMessage
-      }
-    ];
-
-    // If there's an attachment, add it to the message context
-    if (attachmentData) {
-      messages[0].content = [
-        {
-          type: 'text',
-          text: userMessage
-        },
-        {
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: 'application/pdf', // Adjust based on file type
-            data: attachmentData.toString('base64')
-          }
-        }
-      ];
-    }
-
-    const systemPrompt = `You are a legal assistant for ${process.env.FIRM_NAME || 'a law firm'}. 
-Your role is to:
-1. Analyze contracts, amendments, and legal documents
-2. Provide legal research and precedent lookup
-3. Draft amendments and legal responses
-4. Follow user instructions carefully
-
-When the user asks for a Word document response, generate it in markdown format and clearly state "GENERATE_DOCX: true" at the start.
-Keep responses concise but thorough.`;
+    console.log('📞 Calling Claude API with message:', userMessage.substring(0, 50) + '...');
 
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: messages
+      max_tokens: 1024,
+      system: 'You are a helpful legal assistant. Keep responses concise and friendly.',
+      messages: [
+        {
+          role: 'user',
+          content: userMessage
+        }
+      ]
     }, {
       headers: {
         'x-api-key': CLAUDE_API_KEY,
@@ -130,92 +78,73 @@ Keep responses concise but thorough.`;
     });
 
     const textContent = response.data.content.find(c => c.type === 'text');
+    console.log('✅ Claude responded');
     return textContent.text;
   } catch (error) {
-    console.error('Claude API error:', error.response?.data || error.message);
+    console.error('❌ Claude API error:', error.response?.data || error.message);
     throw error;
   }
 }
+
+// ============================================
+// HEALTH CHECK ENDPOINT
+// ============================================
+app.get('/health', (req, res) => {
+  console.log('💚 Health check ping');
+  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+});
 
 // ============================================
 // MAIN WEBHOOK ENDPOINT
 // ============================================
 app.post('/webhook/whatsapp', async (req, res) => {
   try {
-    // Acknowledge receipt immediately
+    console.log('\n📨 Webhook received!');
+    console.log('Body:', JSON.stringify(req.body, null, 2));
+
+    // Acknowledge immediately so Twilio knows we got it
     res.status(200).send('OK');
 
-    const from = req.body.Messages?.[0]?.From?.replace('whatsapp:', '');
-    const messageBody = req.body.Messages?.[0]?.Body || '';
-    const mediaData = req.body.Messages?.[0]?.Media?.[0]; // If file attached
+    // Extract message data - Twilio sends form data
+    const from = req.body.From?.replace('whatsapp:', '') || req.body.from;
+    const messageBody = req.body.Body || req.body.body || '';
 
-    console.log(`Message from ${from}: ${messageBody}`);
+    console.log(`📱 Message from ${from}: ${messageBody}`);
 
-    if (!from) {
-      console.error('No sender found in webhook');
+    if (!from || !messageBody) {
+      console.log('⚠️  Missing from or body:', { from, messageBody });
       return;
     }
 
-    // Send "thinking..." message
+    // Send thinking message
     await sendWhatsAppMessage(from, '⏳ Processing your message...');
 
-    let attachmentData = null;
-    let attachmentInfo = '';
+    // Call Claude
+    const claudeResponse = await callClaudeAPI(messageBody);
 
-    // Download attachment if present
-    if (mediaData?.Url) {
-      console.log('Attachment detected, downloading...');
-      const downloaded = await downloadMediaFromTwilio(mediaData.Url);
-      attachmentData = downloaded.fileData;
-      attachmentInfo = `\n📎 File attached: ${mediaData.ContentType}`;
-    }
-
-    // Call Claude with message + attachment
-    const claudeResponse = await callClaudeAPI(
-      messageBody + attachmentInfo,
-      attachmentData,
-      messageBody
-    );
-
-    // Check if Claude is requesting a Word document
-    let responseMessage = claudeResponse;
-    let generateDocx = false;
-
-    if (claudeResponse.includes('GENERATE_DOCX: true')) {
-      generateDocx = true;
-      responseMessage = claudeResponse.replace('GENERATE_DOCX: true', '').trim();
-    }
-
-    // For now, send text response
-    // (We'll add Word doc generation in Step 2)
-    if (generateDocx) {
-      await sendWhatsAppMessage(
-        from,
-        `📄 Word document generation requested.\n\n${responseMessage}\n\n(Coming in Step 2: Word doc will be generated and sent here)`
-      );
-    } else {
-      await sendWhatsAppMessage(from, responseMessage);
-    }
+    // Send response
+    await sendWhatsAppMessage(from, claudeResponse);
+    console.log('✅ Response sent successfully\n');
 
   } catch (error) {
-    console.error('Webhook error:', error);
-    // Send error message to user
+    console.error('❌ Webhook error:', error.message);
     try {
-      const from = req.body.Messages?.[0]?.From?.replace('whatsapp:', '');
+      const from = req.body.From?.replace('whatsapp:', '') || req.body.from;
       if (from) {
         await sendWhatsAppMessage(from, '❌ Error processing your message. Please try again.');
       }
     } catch (innerError) {
-      console.error('Could not send error message:', innerError);
+      console.error('❌ Could not send error message:', innerError.message);
     }
   }
 });
 
 // ============================================
-// HEALTH CHECK ENDPOINT
+// CATCH-ALL LOGGING
 // ============================================
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+app.use((req, res) => {
+  console.log(`⚠️  Unknown route: ${req.method} ${req.path}`);
+  res.status(404).json({ error: 'Not found' });
 });
 
 // ============================================
@@ -224,6 +153,6 @@ app.get('/health', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`\n✅ WhatsApp Agent webhook running on port ${PORT}`);
-  console.log(`📱 Webhook URL: http://localhost:${PORT}/webhook/whatsapp`);
-  console.log(`❤️  Health check: http://localhost:${PORT}/health\n`);
+  console.log(`📱 Webhook URL: https://whatsapp-legal-agent-tyc6.onrender.com/webhook/whatsapp`);
+  console.log(`❤️  Health check: https://whatsapp-legal-agent-tyc6.onrender.com/health\n`);
 });
