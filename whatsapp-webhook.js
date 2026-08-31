@@ -11,12 +11,11 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
-// Updated model name - using proven stable model
-const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022';
+// Most basic, proven model
+const CLAUDE_MODEL = 'claude-3-sonnet-20240229';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
-console.log('🚀 WhatsApp Agent Starting');
-console.log('Model:', CLAUDE_MODEL);
+console.log('🚀 Starting');
 
 async function sendWhatsAppMessage(to, message) {
   try {
@@ -32,44 +31,53 @@ async function sendWhatsAppMessage(to, message) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
-    console.log('✅ Message sent');
-    return true;
+    console.log('✅ Sent');
   } catch (error) {
-    console.error('❌ Send failed:', error.response?.data || error.message);
+    console.error('❌ Send error:', error.message);
     throw error;
   }
 }
 
-async function callClaudeAPI(userMessage) {
+async function callClaudeAPI(message) {
   try {
-    console.log('📞 Calling Claude...');
+    console.log('📞 Claude API call...');
+    console.log('Model:', CLAUDE_MODEL);
+    console.log('Key length:', CLAUDE_API_KEY.length);
     
-    const response = await axios.post(CLAUDE_API_URL, {
+    const payload = {
       model: CLAUDE_MODEL,
-      max_tokens: 4096,
-      messages: [{
-        role: 'user',
-        content: userMessage
-      }]
-    }, {
+      max_tokens: 2000,
+      messages: [
+        {
+          role: 'user',
+          content: message
+        }
+      ]
+    };
+
+    console.log('Payload keys:', Object.keys(payload));
+
+    const response = await axios.post(CLAUDE_API_URL, payload, {
       headers: {
         'x-api-key': CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-      }
+        'anthropic-version': '2023-06-01'
+      },
+      timeout: 30000
     });
 
-    const textContent = response.data.content.find(c => c.type === 'text');
-    console.log('✅ Claude response received');
-    return textContent.text;
+    console.log('✅ Claude responded');
+    return response.data.content[0].text;
   } catch (error) {
-    console.error('❌ Claude error:', error.response?.status, error.response?.data?.error?.message || error.message);
+    console.error('❌ Claude error:');
+    console.error('  Status:', error.response?.status);
+    console.error('  Message:', error.response?.data?.error?.message);
+    console.error('  Full error:', error.response?.data);
     throw error;
   }
 }
 
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK' });
+  res.json({ ok: true });
 });
 
 app.post('/webhook/whatsapp', async (req, res) => {
@@ -81,59 +89,37 @@ app.post('/webhook/whatsapp', async (req, res) => {
 
     if (!from || !body) return;
 
-    if (from.includes('whatsapp:')) {
-      from = from.replace('whatsapp:', '');
-    }
+    from = from.replace('whatsapp:', '');
+    const to = `whatsapp:${from}`;
 
-    const toNumber = `whatsapp:${from}`;
+    console.log(`\n📱 From ${from}: ${body.substring(0, 40)}`);
 
-    console.log(`\n📱 Message from ${from}: "${body.substring(0, 50)}..."`);
-
-    await sendWhatsAppMessage(toNumber, '⏳ Processing...');
+    await sendWhatsAppMessage(to, '⏳ One moment...');
 
     const response = await callClaudeAPI(body);
 
-    // Check if document requested
-    const wantDoc = body.toLowerCase().includes('document') || 
-                    body.toLowerCase().includes('word');
-    
-    if (wantDoc && response.length > 4090) {
-      // Split long document
-      let offset = 0;
-      while (offset < response.length) {
-        const chunk = response.substring(offset, offset + 4090);
-        await sendWhatsAppMessage(toNumber, chunk);
-        offset += 4090;
+    // Send response
+    if (response.length > 4090) {
+      let i = 0;
+      while (i < response.length) {
+        await sendWhatsAppMessage(to, response.substring(i, i + 4090));
+        i += 4090;
       }
-      await sendWhatsAppMessage(toNumber, '✅ Document complete!');
     } else {
-      // Send regular response
-      if (response.length > 4090) {
-        let offset = 0;
-        while (offset < response.length) {
-          const chunk = response.substring(offset, offset + 4090);
-          await sendWhatsAppMessage(toNumber, chunk);
-          offset += 4090;
-        }
-      } else {
-        await sendWhatsAppMessage(toNumber, response);
-      }
+      await sendWhatsAppMessage(to, response);
     }
 
-    console.log('✅ Complete\n');
+    console.log('✅ Done\n');
 
   } catch (error) {
-    console.error('❌ Error:', error.message);
+    console.error('Error:', error.message);
     try {
       const from = req.body.From?.replace('whatsapp:', '');
       if (from) {
-        await sendWhatsAppMessage(`whatsapp:${from}`, '❌ Error. Try again.');
+        await sendWhatsAppMessage(`whatsapp:${from}`, `Error: ${error.message.substring(0, 80)}`);
       }
     } catch (e) {}
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`✅ Running on port ${PORT}\n`);
-});
+app.listen(3000, () => console.log('Running\n'));
