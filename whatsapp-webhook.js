@@ -14,9 +14,15 @@ const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 const CLAUDE_MODEL = 'claude-opus-4-8';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 
-// Send WhatsApp message
+console.log('🚀 Starting WhatsApp Agent');
+console.log('TWILIO_ACCOUNT_SID:', TWILIO_ACCOUNT_SID ? '✅ SET' : '❌ MISSING');
+console.log('CLAUDE_API_KEY:', CLAUDE_API_KEY ? '✅ SET' : '❌ MISSING');
+console.log('TWILIO_PHONE_NUMBER:', TWILIO_PHONE_NUMBER);
+
 async function sendWhatsAppMessage(to, message) {
   try {
+    console.log(`📤 Sending to ${to}: "${message.substring(0, 50)}..."`);
+    
     const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.create`;
     
     const data = new URLSearchParams();
@@ -24,140 +30,146 @@ async function sendWhatsAppMessage(to, message) {
     data.append('To', to);
     data.append('Body', message);
 
-    await axios.post(url, data, {
+    const response = await axios.post(url, data, {
       auth: { username: TWILIO_ACCOUNT_SID, password: TWILIO_AUTH_TOKEN },
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     });
 
-    console.log('✅ Sent to', to);
+    console.log(`✅ Message sent: ${response.data.sid}`);
+    return response.data.sid;
   } catch (error) {
-    console.error('❌ Send failed:', error.message);
+    console.error('❌ SEND ERROR:', error.response?.status, error.response?.data?.message || error.message);
     throw error;
   }
 }
 
-// Call Claude
 async function callClaudeAPI(userMessage) {
   try {
-    console.log('🤖 Calling Claude...');
+    console.log('🤖 Calling Claude API...');
     
-    const response = await axios.post(CLAUDE_API_URL, {
+    const payload = {
       model: CLAUDE_MODEL,
       max_tokens: 4096,
-      system: 'You are a professional legal assistant for Saudi Arabia. Provide detailed, accurate legal documents and advice. Be concise and professional.',
+      system: 'You are a professional legal assistant for Saudi Arabia. Provide detailed, accurate legal documents and advice.',
       messages: [{ role: 'user', content: userMessage }]
-    }, {
+    };
+
+    console.log('📡 Request to Claude:', CLAUDE_MODEL);
+    
+    const response = await axios.post(CLAUDE_API_URL, payload, {
       headers: {
         'x-api-key': CLAUDE_API_KEY,
-        'anthropic-version': '2023-06-01'
-      }
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      },
+      timeout: 30000
     });
 
     const textContent = response.data.content.find(c => c.type === 'text');
-    console.log('✅ Claude responded');
+    console.log(`✅ Claude responded: ${textContent.text.substring(0, 50)}...`);
     return textContent.text;
   } catch (error) {
-    console.error('❌ Claude error:', error.message);
-    throw error;
+    console.error('❌ CLAUDE ERROR:', error.response?.status, error.response?.data || error.message);
+    throw new Error(`Claude API failed: ${error.response?.data?.error?.message || error.message}`);
   }
 }
 
-// Health check
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'OK' });
+  console.log('💚 Health check');
+  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Main webhook
 app.post('/webhook/whatsapp', async (req, res) => {
-  try {
-    // Acknowledge immediately
-    res.status(200).send('OK');
+  console.log('\n' + '='.repeat(60));
+  console.log('📨 WEBHOOK RECEIVED');
+  console.log('='.repeat(60));
+  
+  res.status(200).send('OK');
 
+  try {
     let from = req.body.From;
     const body = req.body.Body;
 
-    if (!from || !body) return;
+    console.log(`From: ${from}`);
+    console.log(`Message: "${body}"`);
+
+    if (!from || !body) {
+      console.error('❌ Missing From or Body in request');
+      return;
+    }
 
     if (from.includes('whatsapp:')) {
       from = from.replace('whatsapp:', '');
     }
 
-    console.log(`\n📱 Message from ${from}:`);
-    console.log(`   "${body.substring(0, 80)}..."`);
+    const toNumber = `whatsapp:${from}`;
+    console.log(`🎯 Target: ${toNumber}`);
 
-    // Send thinking message
-    await sendWhatsAppMessage(`whatsapp:${from}`, '⏳ Processing...');
+    // Send thinking
+    await sendWhatsAppMessage(toNumber, '⏳ Processing your request...');
 
     // Call Claude
-    let claudeResponse = await callClaudeAPI(body);
+    const claudeResponse = await callClaudeAPI(body);
+    console.log(`📄 Response length: ${claudeResponse.length} chars`);
 
-    // Check if document was requested
-    const documentRequested = body.toLowerCase().includes('word') || 
-                              body.toLowerCase().includes('docx') || 
-                              body.toLowerCase().includes('document');
-
-    if (documentRequested) {
-      console.log('📄 Document requested');
+    // Check if document requested
+    const wantDoc = body.toLowerCase().includes('document') || 
+                    body.toLowerCase().includes('word') || 
+                    body.toLowerCase().includes('docx');
+    
+    if (wantDoc) {
+      console.log('📋 Document mode: splitting long response');
       
-      // Split response into chunks if too long (WhatsApp has message limits)
       const maxLength = 4090;
       if (claudeResponse.length > maxLength) {
-        // Send first part
-        await sendWhatsAppMessage(`whatsapp:${from}`, claudeResponse.substring(0, maxLength));
-        
-        // Send remaining parts
-        let remaining = claudeResponse.substring(maxLength);
-        while (remaining.length > 0) {
-          await sendWhatsAppMessage(`whatsapp:${from}`, remaining.substring(0, maxLength));
-          remaining = remaining.substring(maxLength);
+        let offset = 0;
+        while (offset < claudeResponse.length) {
+          const chunk = claudeResponse.substring(offset, offset + maxLength);
+          await sendWhatsAppMessage(toNumber, chunk);
+          offset += maxLength;
         }
-
-        // Send final note
-        await sendWhatsAppMessage(
-          `whatsapp:${from}`, 
-          `✅ Document complete!\n\n(In Step 3, documents will auto-save to Google Drive with shareable links)`
-        );
+        await sendWhatsAppMessage(toNumber, '✅ Document complete! (Will auto-save to Drive in Step 3)');
       } else {
-        // Send complete document
-        await sendWhatsAppMessage(`whatsapp:${from}`, claudeResponse);
-        await sendWhatsAppMessage(
-          `whatsapp:${from}`, 
-          `✅ Document generated!\n\n(In Step 3, this will auto-save to Google Drive)`
-        );
+        await sendWhatsAppMessage(toNumber, claudeResponse);
+        await sendWhatsAppMessage(toNumber, '✅ Document generated! (Will auto-save to Drive in Step 3)');
       }
     } else {
-      // Regular text response
-      // Split if too long
+      console.log('💬 Text mode: sending response');
+      
       const maxLength = 4090;
       if (claudeResponse.length > maxLength) {
-        await sendWhatsAppMessage(`whatsapp:${from}`, claudeResponse.substring(0, maxLength));
-        let remaining = claudeResponse.substring(maxLength);
-        while (remaining.length > 0) {
-          await sendWhatsAppMessage(`whatsapp:${from}`, remaining.substring(0, maxLength));
-          remaining = remaining.substring(maxLength);
+        let offset = 0;
+        while (offset < claudeResponse.length) {
+          const chunk = claudeResponse.substring(offset, offset + maxLength);
+          await sendWhatsAppMessage(toNumber, chunk);
+          offset += maxLength;
         }
       } else {
-        await sendWhatsAppMessage(`whatsapp:${from}`, claudeResponse);
+        await sendWhatsAppMessage(toNumber, claudeResponse);
       }
     }
 
-    console.log('✅ Response sent\n');
+    console.log('✅ WEBHOOK COMPLETE');
+    console.log('='.repeat(60) + '\n');
 
   } catch (error) {
-    console.error('❌ Error:', error.message);
+    console.error('❌ WEBHOOK ERROR:', error.message);
+    console.error('Stack:', error.stack);
+    
     try {
       const from = req.body.From?.replace('whatsapp:', '');
       if (from) {
-        await sendWhatsAppMessage(`whatsapp:${from}`, '❌ Error processing request. Please try again.');
+        await sendWhatsAppMessage(`whatsapp:${from}`, `❌ Error: ${error.message.substring(0, 100)}`);
       }
     } catch (e) {
-      console.error('Could not send error message');
+      console.error('Could not send error message:', e.message);
     }
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\n✅ WhatsApp Legal Agent running on port ${PORT}`);
-  console.log(`📱 Ready to receive messages\n`);
+  console.log(`\n✅ Server running on port ${PORT}`);
+  console.log(`📱 Webhook: /webhook/whatsapp`);
+  console.log(`❤️  Health: /health\n`);
 });
