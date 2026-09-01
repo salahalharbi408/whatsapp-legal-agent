@@ -3,46 +3,38 @@ const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
-app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
-// FREE TIER MODEL - Original Claude 3 Haiku
 const CLAUDE_MODEL = 'claude-3-haiku-20240307';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
+const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
-console.log('🚀 Model (Free Tier):', CLAUDE_MODEL);
+console.log('🚀 Telegram Legal Agent Starting\n');
 
-async function sendWhatsAppMessage(to, message) {
+async function sendTelegramMessage(chatId, message) {
   try {
-    const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.create`;
-    
-    const data = new URLSearchParams();
-    data.append('From', `whatsapp:${TWILIO_PHONE_NUMBER}`);
-    data.append('To', to);
-    data.append('Body', message);
-
-    await axios.post(url, data, {
-      auth: { username: TWILIO_ACCOUNT_SID, password: TWILIO_AUTH_TOKEN },
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    await axios.post(`${TELEGRAM_API}/sendMessage`, {
+      chat_id: chatId,
+      text: message,
+      parse_mode: 'HTML'
     });
-
-    console.log('✅ Sent');
+    console.log(`✅ Sent to ${chatId}`);
   } catch (error) {
-    console.error('❌ Error:', error.message);
+    console.error('❌ Send error:', error.message);
     throw error;
   }
 }
 
 async function callClaudeAPI(message) {
   try {
+    console.log('📞 Claude API...');
+    
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
-      max_tokens: 1024,
+      max_tokens: 2048,
       messages: [{
         role: 'user',
         content: message
@@ -57,46 +49,55 @@ async function callClaudeAPI(message) {
     console.log('✅ Claude OK');
     return response.data.content[0].text;
   } catch (error) {
-    console.error('❌ Error:', error.response?.status, error.response?.data?.error?.message);
+    console.error('❌ Claude error:', error.response?.status, error.response?.data?.error?.message);
     throw error;
   }
 }
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
-app.post('/webhook/whatsapp', async (req, res) => {
-  res.status(200).send('OK');
+app.post('/webhook', async (req, res) => {
+  res.status(200).json({ ok: true });
 
   try {
-    let from = req.body.From?.replace('whatsapp:', '');
-    const body = req.body.Body;
+    const message = req.body.message;
+    if (!message || !message.text) return;
 
-    if (!from || !body) return;
+    const chatId = message.chat.id;
+    const userMessage = message.text;
 
-    const to = `whatsapp:${from}`;
-    console.log(`📱 ${from}: ${body}`);
+    console.log(`\n📱 Chat ${chatId}: ${userMessage}`);
 
-    await sendWhatsAppMessage(to, '⏳ Processing...');
-    const response = await callClaudeAPI(body);
+    await sendTelegramMessage(chatId, '⏳ Processing...');
 
-    if (response.length > 4090) {
+    const response = await callClaudeAPI(userMessage);
+
+    // Telegram has a 4096 character limit
+    const maxLength = 4096;
+    if (response.length > maxLength) {
       let i = 0;
       while (i < response.length) {
-        await sendWhatsAppMessage(to, response.substring(i, i + 4090));
-        i += 4090;
+        await sendTelegramMessage(chatId, response.substring(i, i + maxLength));
+        i += maxLength;
       }
     } else {
-      await sendWhatsAppMessage(to, response);
+      await sendTelegramMessage(chatId, response);
     }
 
     console.log('✅ Done\n');
   } catch (error) {
     console.error('Error:', error.message);
     try {
-      const from = req.body.From?.replace('whatsapp:', '');
-      if (from) await sendWhatsAppMessage(`whatsapp:${from}`, 'Error. Try again.');
+      const chatId = req.body.message?.chat?.id;
+      if (chatId) {
+        await sendTelegramMessage(chatId, '❌ Error. Try again.');
+      }
     } catch (e) {}
   }
 });
 
-app.listen(3000, () => console.log('Ready\n'));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`✅ Running on port ${PORT}`);
+  console.log(`📱 Webhook: /webhook\n`);
+});
