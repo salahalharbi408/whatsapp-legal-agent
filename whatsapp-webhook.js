@@ -8,8 +8,7 @@ app.use(express.json());
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
-// Most basic model - works on all tiers
-const CLAUDE_MODEL = 'claude-3-haiku-20240307';
+const CLAUDE_MODEL = 'claude-sonnet-5';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
@@ -22,17 +21,21 @@ async function sendTelegramMessage(chatId, message) {
       chat_id: chatId,
       text: message
     });
+    console.log(`✅ Sent to ${chatId}`);
   } catch (error) {
-    console.error('Send failed:', error.message);
+    console.error('❌ Send error:', error.message);
     throw error;
   }
 }
 
 async function callClaudeAPI(message) {
   try {
+    console.log('📞 Claude API with', CLAUDE_MODEL);
+    
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
-      max_tokens: 1024,
+      max_tokens: 2048,
+      system: 'You are a professional legal assistant for Saudi Arabia. Provide helpful, accurate legal guidance.',
       messages: [{
         role: 'user',
         content: message
@@ -44,8 +47,10 @@ async function callClaudeAPI(message) {
       }
     });
 
+    console.log('✅ Claude OK');
     return response.data.content[0].text;
   } catch (error) {
+    console.error('❌ Claude error:', error.response?.data || error.message);
     throw error;
   }
 }
@@ -62,9 +67,9 @@ app.post('/webhook', async (req, res) => {
     const chatId = message.chat.id;
     const userMessage = message.text;
 
-    console.log(`📱 ${chatId}: ${userMessage}`);
+    console.log(`\n📱 Chat ${chatId}: ${userMessage}`);
 
-    await sendTelegramMessage(chatId, 'Processing...');
+    await sendTelegramMessage(chatId, '⏳ Processing...');
     const response = await callClaudeAPI(userMessage);
 
     const maxLength = 4096;
@@ -80,15 +85,17 @@ app.post('/webhook', async (req, res) => {
 
     console.log('✅ Done\n');
   } catch (error) {
-    console.error('Error:', error.message);
+    console.error('❌ Error:', error.message);
     try {
       const chatId = req.body.message?.chat?.id;
       if (chatId) {
-        await sendTelegramMessage(chatId, 'Error processing message.');
+        await sendTelegramMessage(chatId, '❌ Error processing message.');
       }
     } catch (e) {}
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Ready on ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`✅ Ready on port ${PORT}\n`);
+});
