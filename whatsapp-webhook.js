@@ -12,8 +12,7 @@ const CLAUDE_MODEL = 'claude-sonnet-5';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
-console.log('🚀 Telegram Legal Agent');
-console.log('Model:', CLAUDE_MODEL);
+console.log('🚀 Telegram Legal Agent Ready\n');
 
 async function sendTelegramMessage(chatId, message) {
   try {
@@ -21,7 +20,7 @@ async function sendTelegramMessage(chatId, message) {
       chat_id: chatId,
       text: message
     });
-    console.log(`✅ Sent to ${chatId}`);
+    console.log('✅ Message sent');
   } catch (error) {
     console.error('❌ Send error:', error.message);
     throw error;
@@ -30,12 +29,10 @@ async function sendTelegramMessage(chatId, message) {
 
 async function callClaudeAPI(message) {
   try {
-    console.log('📞 Claude API with', CLAUDE_MODEL);
-    
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
       max_tokens: 2048,
-      system: 'You are a professional legal assistant for Saudi Arabia. Provide helpful, accurate legal guidance.',
+      system: 'You are a professional legal assistant for Saudi Arabia. Provide clear, helpful legal guidance without markdown formatting or special characters.',
       messages: [{
         role: 'user',
         content: message
@@ -47,12 +44,21 @@ async function callClaudeAPI(message) {
       }
     });
 
-    console.log('✅ Claude OK');
     return response.data.content[0].text;
   } catch (error) {
-    console.error('❌ Claude error:', error.response?.data || error.message);
+    console.error('❌ Claude error:', error.message);
     throw error;
   }
+}
+
+// Remove markdown formatting
+function cleanText(text) {
+  return text
+    .replace(/\*\*/g, '')      // Remove bold **
+    .replace(/\*/g, '')         // Remove italics *
+    .replace(/#+\s/g, '')       // Remove headers #
+    .replace(/`/g, '')          // Remove code blocks
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1'); // Remove links
 }
 
 app.get('/health', (req, res) => res.json({ ok: true }));
@@ -67,20 +73,24 @@ app.post('/webhook', async (req, res) => {
     const chatId = message.chat.id;
     const userMessage = message.text;
 
-    console.log(`\n📱 Chat ${chatId}: ${userMessage}`);
+    console.log(`📱 ${chatId}: ${userMessage}`);
 
-    await sendTelegramMessage(chatId, '⏳ Processing...');
+    // Call Claude - no "Processing" message
     const response = await callClaudeAPI(userMessage);
+    
+    // Clean the response
+    const cleanedResponse = cleanText(response);
 
+    // Send only the final response
     const maxLength = 4096;
-    if (response.length > maxLength) {
+    if (cleanedResponse.length > maxLength) {
       let i = 0;
-      while (i < response.length) {
-        await sendTelegramMessage(chatId, response.substring(i, i + maxLength));
+      while (i < cleanedResponse.length) {
+        await sendTelegramMessage(chatId, cleanedResponse.substring(i, i + maxLength));
         i += maxLength;
       }
     } else {
-      await sendTelegramMessage(chatId, response);
+      await sendTelegramMessage(chatId, cleanedResponse);
     }
 
     console.log('✅ Done\n');
@@ -89,13 +99,11 @@ app.post('/webhook', async (req, res) => {
     try {
       const chatId = req.body.message?.chat?.id;
       if (chatId) {
-        await sendTelegramMessage(chatId, '❌ Error processing message.');
+        await sendTelegramMessage(chatId, 'Error processing your message. Please try again.');
       }
     } catch (e) {}
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`✅ Ready on port ${PORT}\n`);
-});
+app.listen(PORT, () => console.log(`Ready on port ${PORT}\n`));
