@@ -8,13 +8,13 @@ app.use(express.json());
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
-const CLAUDE_MODEL = 'claude-3-opus-20240229';
+// Most basic model - works on all tiers
+const CLAUDE_MODEL = 'claude-3-haiku-20240307';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
 console.log('🚀 Telegram Legal Agent');
 console.log('Model:', CLAUDE_MODEL);
-console.log('Status: READY\n');
 
 async function sendTelegramMessage(chatId, message) {
   try {
@@ -32,8 +32,7 @@ async function callClaudeAPI(message) {
   try {
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
-      max_tokens: 2048,
-      system: 'You are a professional legal assistant for Saudi Arabia. Provide helpful, accurate legal guidance.',
+      max_tokens: 1024,
       messages: [{
         role: 'user',
         content: message
@@ -66,7 +65,6 @@ app.post('/webhook', async (req, res) => {
     console.log(`📱 ${chatId}: ${userMessage}`);
 
     await sendTelegramMessage(chatId, 'Processing...');
-
     const response = await callClaudeAPI(userMessage);
 
     const maxLength = 4096;
@@ -80,19 +78,17 @@ app.post('/webhook', async (req, res) => {
       await sendTelegramMessage(chatId, response);
     }
 
-    console.log('✅ Response sent\n');
+    console.log('✅ Done\n');
   } catch (error) {
     console.error('Error:', error.message);
     try {
       const chatId = req.body.message?.chat?.id;
       if (chatId) {
-        await sendTelegramMessage(chatId, 'Error. Please try again.');
+        await sendTelegramMessage(chatId, 'Error processing message.');
       }
     } catch (e) {}
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`✅ Ready on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Ready on ${PORT}`));
