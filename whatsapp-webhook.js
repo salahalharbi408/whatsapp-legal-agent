@@ -8,18 +8,19 @@ app.use(express.json());
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY;
 
-const CLAUDE_MODEL = 'claude-3-haiku-20240307';
+// PAID TIER MODEL - Now you have access!
+const CLAUDE_MODEL = 'claude-opus-4-1-20250805';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}`;
 
-console.log('🚀 Telegram Legal Agent Starting\n');
+console.log('🚀 Telegram Legal Agent Starting');
+console.log('Model:', CLAUDE_MODEL);
 
 async function sendTelegramMessage(chatId, message) {
   try {
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: chatId,
-      text: message,
-      parse_mode: 'HTML'
+      text: message
     });
     console.log(`✅ Sent to ${chatId}`);
   } catch (error) {
@@ -35,6 +36,7 @@ async function callClaudeAPI(message) {
     const response = await axios.post(CLAUDE_API_URL, {
       model: CLAUDE_MODEL,
       max_tokens: 2048,
+      system: 'You are a professional legal assistant for Saudi Arabia law and business. Provide helpful, accurate legal guidance.',
       messages: [{
         role: 'user',
         content: message
