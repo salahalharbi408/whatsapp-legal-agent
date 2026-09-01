@@ -1,52 +1,36 @@
-# WhatsApp Legal Agent
+# Telegram Legal Agent
 
-AI-powered WhatsApp bot for legal document analysis and contract review, powered by Claude API.
+AI-powered Telegram bot for legal document analysis and contract review, powered by Claude API.
 
 ## Features
 
-- 📱 Receive WhatsApp messages with attachments
+- 💬 Receive messages on Telegram
 - 🤖 Claude AI analyzes contracts and legal documents
-- 📄 Generate Word documents on demand
+- 📄 Generate legal documents and advice
 - 🔍 Legal research and precedent lookup
 - ⚡ Real-time responses
 
-## Setup
+## Quick Setup
 
-1. Add your `CLAUDE_API_KEY` to environment variables
-2. Deploy to Render or your hosting platform
-3. Connect webhook URL to Twilio WhatsApp sandbox
+1. Create bot with @BotFather on Telegram - copy the TOKEN
+2. Get Claude API key from https://console.anthropic.com/account/keys
+3. Deploy to Render with these env variables:
+   - TELEGRAM_BOT_TOKEN=your_token
+   - CLAUDE_API_KEY=your_key
+4. Register webhook in browser: https://api.telegram.org/botTOKEN/setWebhook?url=https://your-render-url/webhook
+5. Send a message to your bot - it works!
 
 ## Environment Variables
 
-```
-TWILIO_ACCOUNT_SID=your_twilio_account_sid
-TWILIO_AUTH_TOKEN=your_twilio_auth_token
-TWILIO_PHONE_NUMBER=+14155238886
-CLAUDE_API_KEY=sk-ant-your-key-here
-FIRM_NAME=Your Law Firm
-PORT=3000
-NODE_ENV=production
-```
+TELEGRAM_BOT_TOKEN - Your Telegram bot token from BotFather
+CLAUDE_API_KEY - Your Claude API key
+PORT - 3000
+NODE_ENV - production
 
-## Running Locally
+## How It Works
 
-```bash
-npm install
-npm start
-```
+Message → Telegram → Webhook → Claude API → Response back to Telegram
 
-## Deployment
+## Support
 
-Deploy to Render:
-1. Connect GitHub repository
-2. Add environment variables
-3. Deploy
-
-Webhook URL: `https://your-app.onrender.com/webhook/whatsapp`
-
-## Next Steps
-
-- [ ] Add Word document generation
-- [ ] Connect Google Drive integration
-- [ ] Add firm database context
-- [ ] Build legal research workflows
+Check Render logs if something fails
